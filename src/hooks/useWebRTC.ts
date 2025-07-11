@@ -9,6 +9,7 @@ interface FileTransfer {
   progress: number;
   status: 'pending' | 'transferring' | 'completed' | 'failed';
   peer?: string;
+  blob?: Blob;
 }
 
 type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'failed';
@@ -23,6 +24,20 @@ export const useWebRTC = () => {
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map());
   const dataChannelsRef = useRef<Map<string, RTCDataChannel>>(new Map());
   const currentRoomRef = useRef<string | null>(null);
+
+  // Function to download a file
+  const downloadFile = useCallback((transfer: FileTransfer) => {
+    if (!transfer.blob) return;
+
+    const url = URL.createObjectURL(transfer.blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = transfer.name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, []);
 
   // WebSocket connection
   const connectWebSocket = useCallback(() => {
@@ -145,9 +160,16 @@ export const useWebRTC = () => {
             type: transfer.type,
             progress: 100,
             status: 'completed',
-            peer: 'demo-peer'
+            peer: 'demo-peer',
+            blob: file // In real implementation, this would be the received file blob
           };
-          setIncomingFiles(prev => [...prev, receivedTransfer]);
+          
+          setIncomingFiles(prev => {
+            const newFiles = [...prev, receivedTransfer];
+            // Auto-download the received file
+            setTimeout(() => downloadFile(receivedTransfer), 100);
+            return newFiles;
+          });
         }, 500);
       }
 
@@ -160,7 +182,7 @@ export const useWebRTC = () => {
       );
     }, 200);
 
-  }, [connectedPeers]);
+  }, [connectedPeers, downloadFile]);
 
   // Cleanup
   useEffect(() => {
@@ -177,6 +199,7 @@ export const useWebRTC = () => {
     outgoingFiles,
     createRoom,
     joinRoom,
-    sendFile
+    sendFile,
+    downloadFile
   };
 };

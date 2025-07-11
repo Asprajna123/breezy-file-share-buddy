@@ -22,7 +22,8 @@ const FileShare = () => {
     joinRoom,
     sendFile,
     incomingFiles,
-    outgoingFiles
+    outgoingFiles,
+    downloadFile
   } = useWebRTC();
 
   const generateRoomCode = () => {
@@ -228,6 +229,7 @@ const FileShare = () => {
             <FileTransferList
               incomingFiles={incomingFiles}
               outgoingFiles={outgoingFiles}
+              onDownloadFile={downloadFile}
             />
           </div>
         </div>

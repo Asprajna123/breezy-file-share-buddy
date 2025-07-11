@@ -23,14 +23,16 @@ interface FileTransfer {
   progress: number;
   status: 'pending' | 'transferring' | 'completed' | 'failed';
   peer?: string;
+  blob?: Blob;
 }
 
 interface FileTransferListProps {
   incomingFiles: FileTransfer[];
   outgoingFiles: FileTransfer[];
+  onDownloadFile?: (transfer: FileTransfer) => void;
 }
 
-const FileTransferList = ({ incomingFiles, outgoingFiles }: FileTransferListProps) => {
+const FileTransferList = ({ incomingFiles, outgoingFiles, onDownloadFile }: FileTransferListProps) => {
   const getFileIcon = (type: string) => {
     if (type.startsWith('image/')) return <Image className="h-4 w-4" />;
     if (type.startsWith('video/')) return <Video className="h-4 w-4" />;
@@ -84,6 +86,17 @@ const FileTransferList = ({ incomingFiles, outgoingFiles }: FileTransferListProp
           <div className="w-20">
             <Progress value={transfer.progress} className="h-2" />
           </div>
+        )}
+        {isIncoming && transfer.status === 'completed' && onDownloadFile && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => onDownloadFile(transfer)}
+            className="ml-2"
+          >
+            <Download className="h-4 w-4 mr-1" />
+            Download
+          </Button>
         )}
       </div>
     </div>
