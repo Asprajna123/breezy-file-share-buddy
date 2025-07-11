@@ -1,4 +1,3 @@
-
 import { useState, useRef, useCallback, useEffect } from 'react';
 
 interface FileTransfer {
@@ -25,7 +24,7 @@ export const useWebRTC = () => {
   const dataChannelsRef = useRef<Map<string, RTCDataChannel>>(new Map());
   const currentRoomRef = useRef<string | null>(null);
 
-  // Function to download a file
+  // Function to download a file (only when button is clicked)
   const downloadFile = useCallback((transfer: FileTransfer) => {
     if (!transfer.blob) return;
 
@@ -151,7 +150,7 @@ export const useWebRTC = () => {
           )
         );
 
-        // Simulate receiving the file on the other end
+        // Simulate receiving the file on the other end (without auto-download)
         setTimeout(() => {
           const receivedTransfer: FileTransfer = {
             id: `received-${transfer.id}`,
@@ -164,12 +163,8 @@ export const useWebRTC = () => {
             blob: file // In real implementation, this would be the received file blob
           };
           
-          setIncomingFiles(prev => {
-            const newFiles = [...prev, receivedTransfer];
-            // Auto-download the received file
-            setTimeout(() => downloadFile(receivedTransfer), 100);
-            return newFiles;
-          });
+          // Add to incoming files but don't auto-download
+          setIncomingFiles(prev => [...prev, receivedTransfer]);
         }, 500);
       }
 
@@ -182,7 +177,7 @@ export const useWebRTC = () => {
       );
     }, 200);
 
-  }, [connectedPeers, downloadFile]);
+  }, [connectedPeers]);
 
   // Cleanup
   useEffect(() => {
