@@ -1,5 +1,5 @@
-
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { 
@@ -88,10 +88,12 @@ const Index = () => {
           </div>
           
           <div className="flex flex-col sm:flex-row gap-4 justify-center mb-12">
-            <Button size="lg" className="text-lg px-8 py-6 hover-scale">
-              Start Sharing Now
-              <ArrowRight className="ml-2 h-5 w-5" />
-            </Button>
+            <Link to="/share">
+              <Button size="lg" className="text-lg px-8 py-6 hover-scale">
+                Start Sharing Now
+                <ArrowRight className="ml-2 h-5 w-5" />
+              </Button>
+            </Link>
             <Button variant="outline" size="lg" className="text-lg px-8 py-6">
               <Github className="mr-2 h-5 w-5" />
               View Source
@@ -237,14 +239,18 @@ const Index = () => {
             Join thousands of users who trust our P2P file sharing platform
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Button size="lg" variant="secondary" className="text-lg px-8 py-6">
-              <Upload className="mr-2 h-5 w-5" />
-              Start Sharing Now
-            </Button>
-            <Button size="lg" variant="outline" className="text-lg px-8 py-6 border-primary-foreground text-primary-foreground hover:bg-primary-foreground hover:text-primary">
-              <Download className="mr-2 h-5 w-5" />
-              Receive Files
-            </Button>
+            <Link to="/share">
+              <Button size="lg" variant="secondary" className="text-lg px-8 py-6">
+                <Upload className="mr-2 h-5 w-5" />
+                Start Sharing Now
+              </Button>
+            </Link>
+            <Link to="/share">
+              <Button size="lg" variant="outline" className="text-lg px-8 py-6 border-primary-foreground text-primary-foreground hover:bg-primary-foreground hover:text-primary">
+                <Download className="mr-2 h-5 w-5" />
+                Receive Files
+              </Button>
+            </Link>
           </div>
         </div>
       </section>
