@@ -1,4 +1,3 @@
-
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -6,6 +5,11 @@ const cors = require('cors');
 
 const app = express();
 app.use(cors());
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
 const server = http.createServer(app);
 const io = socketIo(server, {
@@ -30,13 +34,8 @@ io.on('connection', (socket) => {
     const room = rooms.get(roomId);
     const existingUsers = Array.from(room);
     
-    // Send existing users to the new user
     socket.emit('all-users', existingUsers);
-    
-    // Notify existing users about the new user
     socket.to(roomId).emit('user-joined', socket.id);
-    
-    // Add new user to room
     room.add(socket.id);
     
     console.log(`User ${socket.id} joined room ${roomId}. Room size: ${room.size}`);
@@ -66,7 +65,6 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
     
-    // Remove user from all rooms
     rooms.forEach((room, roomId) => {
       if (room.has(socket.id)) {
         room.delete(socket.id);

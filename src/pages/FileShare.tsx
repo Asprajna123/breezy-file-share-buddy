@@ -1,4 +1,3 @@
-
 import { useState, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -9,6 +8,7 @@ import DragDropZone from '@/components/DragDropZone';
 import ConnectionStatus from '@/components/ConnectionStatus';
 import FileTransferList from '@/components/FileTransferList';
 import { useWebRTC } from '@/hooks/useWebRTC';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 
 const FileShare = () => {
   const [roomCode, setRoomCode] = useState('');
@@ -18,6 +18,7 @@ const FileShare = () => {
   const {
     connectionState,
     connectedPeers,
+    connectionError,
     createRoom,
     joinRoom,
     sendFile,
@@ -44,7 +45,7 @@ const FileShare = () => {
     } catch (error) {
       toast({
         title: "Error",
-        description: "Failed to create room. Please try again.",
+        description: "Failed to create room. Please check if the signaling server is running.",
         variant: "destructive",
       });
     }
@@ -69,7 +70,7 @@ const FileShare = () => {
     } catch (error) {
       toast({
         title: "Error",
-        description: "Failed to join room. Please check the room code.",
+        description: "Failed to join room. Please check if the signaling server is running.",
         variant: "destructive",
       });
     }
@@ -117,6 +118,24 @@ const FileShare = () => {
           </p>
         </div>
 
+        {connectionError && (
+          <Alert variant="destructive" className="mb-6">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              {connectionError}
+              <div className="mt-2 text-sm">
+                <p>To fix this:</p>
+                <ol className="list-decimal list-inside mt-1 space-y-1">
+                  <li>Navigate to the project root directory</li>
+                  <li>Run: <code className="bg-muted px-1 rounded">cd signaling-server && npm install</code></li>
+                  <li>Run: <code className="bg-muted px-1 rounded">npm start</code></li>
+                  <li>The server should start on port 3001</li>
+                </ol>
+              </div>
+            </AlertDescription>
+          </Alert>
+        )}
+
         <div className="grid lg:grid-cols-2 gap-8">
           {/* Connection Panel */}
           <Card>
@@ -139,8 +158,9 @@ const FileShare = () => {
                       onClick={handleCreateRoom} 
                       className="w-full"
                       size="lg"
+                      disabled={connectionState === 'connecting'}
                     >
-                      Create New Room
+                      {connectionState === 'connecting' ? 'Connecting...' : 'Create New Room'}
                     </Button>
                   </div>
 
@@ -161,9 +181,13 @@ const FileShare = () => {
                       value={roomCode}
                       onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
                       className="uppercase"
+                      disabled={connectionState === 'connecting'}
                     />
-                    <Button onClick={handleJoinRoom}>
-                      Join
+                    <Button 
+                      onClick={handleJoinRoom}
+                      disabled={connectionState === 'connecting'}
+                    >
+                      {connectionState === 'connecting' ? 'Joining...' : 'Join'}
                     </Button>
                   </div>
                 </>

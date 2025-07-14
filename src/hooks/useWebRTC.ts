@@ -26,13 +26,15 @@ export const useWebRTC = () => {
   const [connectedPeers, setConnectedPeers] = useState<string[]>([]);
   const [incomingFiles, setIncomingFiles] = useState<FileTransfer[]>([]);
   const [outgoingFiles, setOutgoingFiles] = useState<FileTransfer[]>([]);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
 
   const socketRef = useRef<Socket | null>(null);
   const peerConnectionsRef = useRef<Map<string, PeerConnection>>(new Map());
   const currentRoomRef = useRef<string | null>(null);
   const pendingTransfersRef = useRef<Map<string, { chunks: ArrayBuffer[]; received: number; total: number }>>(new Map());
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Enhanced ICE servers configuration with multiple STUN servers
+  // Enhanced ICE servers configuration
   const iceServers = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
@@ -40,10 +42,23 @@ export const useWebRTC = () => {
     { urls: 'stun:stun.services.mozilla.com' }
   ];
 
-  // Connection timeout duration
-  const CONNECTION_TIMEOUT = 15000; // 15 seconds
+  const CONNECTION_TIMEOUT = 10000; // 10 seconds
+  const RECONNECT_DELAY = 3000; // 3 seconds
 
-  // Create peer connection with enhanced error handling
+  // Check if signaling server is accessible
+  const checkServerHealth = useCallback(async (): Promise<boolean> => {
+    try {
+      const response = await fetch('http://localhost:3001/health', { 
+        method: 'GET',
+        timeout: 5000 
+      });
+      return response.ok;
+    } catch (error) {
+      console.log('Signaling server health check failed:', error);
+      return false;
+    }
+  }, []);
+
   const createPeerConnection = useCallback((socketId: string): RTCPeerConnection => {
     console.log(`Creating peer connection with ${socketId}`);
     
@@ -52,7 +67,6 @@ export const useWebRTC = () => {
       iceCandidatePoolSize: 10
     });
 
-    // Enhanced connection state monitoring
     peerConnection.onconnectionstatechange = () => {
       console.log(`Peer connection state with ${socketId}:`, peerConnection.connectionState);
       
@@ -65,7 +79,6 @@ export const useWebRTC = () => {
           return prev;
         });
         
-        // Clear timeout if connection succeeds
         const peer = peerConnectionsRef.current.get(socketId);
         if (peer?.connectionTimeout) {
           clearTimeout(peer.connectionTimeout);
@@ -74,7 +87,6 @@ export const useWebRTC = () => {
         console.log(`Connection failed/disconnected with peer ${socketId}`);
         setConnectedPeers(prev => prev.filter(id => id !== socketId));
         
-        // Clean up failed connection
         const peer = peerConnectionsRef.current.get(socketId);
         if (peer?.connectionTimeout) {
           clearTimeout(peer.connectionTimeout);
@@ -83,7 +95,6 @@ export const useWebRTC = () => {
       }
     };
 
-    // Handle ICE candidates with enhanced logging
     peerConnection.onicecandidate = (event) => {
       if (event.candidate && socketRef.current) {
         console.log(`Sending ICE candidate to ${socketId}`);
@@ -91,17 +102,9 @@ export const useWebRTC = () => {
           candidate: event.candidate,
           targetSocketId: socketId
         });
-      } else if (!event.candidate) {
-        console.log(`ICE gathering complete for ${socketId}`);
       }
     };
 
-    // Handle ICE connection state changes
-    peerConnection.oniceconnectionstatechange = () => {
-      console.log(`ICE connection state with ${socketId}:`, peerConnection.iceConnectionState);
-    };
-
-    // Handle incoming data channel
     peerConnection.ondatachannel = (event) => {
       console.log(`Received data channel from ${socketId}`);
       const channel = event.channel;
@@ -111,7 +114,6 @@ export const useWebRTC = () => {
     return peerConnection;
   }, []);
 
-  // Enhanced data channel setup
   const setupDataChannel = useCallback((channel: RTCDataChannel, peerId: string) => {
     channel.binaryType = 'arraybuffer';
 
@@ -119,18 +121,9 @@ export const useWebRTC = () => {
       console.log(`Data channel opened with peer ${peerId}`);
     };
 
-    channel.onclose = () => {
-      console.log(`Data channel closed with peer ${peerId}`);
-    };
-
-    channel.onerror = (error) => {
-      console.error(`Data channel error with peer ${peerId}:`, error);
-    };
-
     channel.onmessage = (event) => {
       try {
         if (typeof event.data === 'string') {
-          // Handle metadata
           const metadata = JSON.parse(event.data);
           if (metadata.type === 'file-start') {
             console.log(`Starting file transfer: ${metadata.name} from ${peerId}`);
@@ -153,7 +146,6 @@ export const useWebRTC = () => {
             setIncomingFiles(prev => [...prev, transfer]);
           }
         } else {
-          // Handle file chunk
           const transferId = new TextDecoder().decode(event.data.slice(0, 36));
           const chunkData = event.data.slice(36);
           
@@ -194,28 +186,49 @@ export const useWebRTC = () => {
     };
   }, []);
 
-  // Enhanced signaling server connection
-  const connectToSignalingServer = useCallback(() => {
-    console.log('Connecting to signaling server...');
+  const connectToSignalingServer = useCallback(async () => {
+    console.log('Checking signaling server health...');
     
-    const socket = io('ws://localhost:3001', {
-      transports: ['websocket'],
+    // First check if server is accessible
+    const isServerHealthy = await checkServerHealth();
+    if (!isServerHealthy) {
+      console.error('Signaling server is not accessible at localhost:3001');
+      setConnectionError('Signaling server not accessible. Please ensure the server is running on localhost:3001');
+      setConnectionState('failed');
+      return null;
+    }
+
+    console.log('Connecting to signaling server...');
+    setConnectionError(null);
+    
+    const socket = io('http://localhost:3001', {
+      transports: ['websocket', 'polling'],
       timeout: 10000,
-      forceNew: true
+      reconnection: true,
+      reconnectionDelay: RECONNECT_DELAY,
+      reconnectionAttempts: 3
     });
 
     socket.on('connect', () => {
-      console.log('Connected to signaling server');
+      console.log('Connected to signaling server with ID:', socket.id);
       socketRef.current = socket;
+      setConnectionError(null);
+      
+      // Clear any existing reconnect timeout
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
     });
 
     socket.on('connect_error', (error) => {
       console.error('Signaling server connection error:', error);
+      setConnectionError(`Connection failed: ${error.message}`);
       setConnectionState('failed');
     });
 
-    socket.on('disconnect', () => {
-      console.log('Disconnected from signaling server');
+    socket.on('disconnect', (reason) => {
+      console.log('Disconnected from signaling server:', reason);
       setConnectionState('disconnected');
       setConnectedPeers([]);
       
@@ -229,12 +242,10 @@ export const useWebRTC = () => {
       peerConnectionsRef.current.clear();
     });
 
-    // Handle all users in room
     socket.on('all-users', async (users: string[]) => {
       console.log('All users in room:', users);
       setConnectionState('connected');
       
-      // Create peer connections for existing users
       for (const userId of users) {
         if (!peerConnectionsRef.current.has(userId)) {
           console.log(`Creating connection to existing user: ${userId}`);
@@ -245,7 +256,6 @@ export const useWebRTC = () => {
           });
           setupDataChannel(dataChannel, userId);
           
-          // Set up connection timeout
           const connectionTimeout = setTimeout(() => {
             console.log(`Connection timeout with ${userId}`);
             peerConnection.close();
@@ -260,7 +270,6 @@ export const useWebRTC = () => {
           });
 
           try {
-            // Create offer with enhanced SDP
             const offer = await peerConnection.createOffer({
               offerToReceiveAudio: false,
               offerToReceiveVideo: false
@@ -276,19 +285,16 @@ export const useWebRTC = () => {
       }
     });
 
-    // Handle new user joined
     socket.on('user-joined', (socketId: string) => {
       console.log('User joined:', socketId);
     });
 
-    // Handle offer
     socket.on('offer', async ({ offer, senderSocketId }: { offer: RTCSessionDescriptionInit; senderSocketId: string }) => {
       console.log('Received offer from:', senderSocketId);
       
       try {
         const peerConnection = createPeerConnection(senderSocketId);
         
-        // Set up connection timeout
         const connectionTimeout = setTimeout(() => {
           console.log(`Connection timeout with ${senderSocketId}`);
           peerConnection.close();
@@ -312,7 +318,6 @@ export const useWebRTC = () => {
       }
     });
 
-    // Handle answer
     socket.on('answer', async ({ answer, senderSocketId }: { answer: RTCSessionDescriptionInit; senderSocketId: string }) => {
       console.log('Received answer from:', senderSocketId);
       
@@ -327,7 +332,6 @@ export const useWebRTC = () => {
       }
     });
 
-    // Handle ICE candidate
     socket.on('ice-candidate', async ({ candidate, senderSocketId }: { candidate: RTCIceCandidateInit; senderSocketId: string }) => {
       console.log(`Received ICE candidate from ${senderSocketId}`);
       
@@ -342,7 +346,6 @@ export const useWebRTC = () => {
       }
     });
 
-    // Handle user disconnected
     socket.on('user-disconnected', (socketId: string) => {
       console.log('User disconnected:', socketId);
       const peer = peerConnectionsRef.current.get(socketId);
@@ -357,18 +360,22 @@ export const useWebRTC = () => {
     });
 
     return socket;
-  }, [createPeerConnection, setupDataChannel]);
+  }, [createPeerConnection, setupDataChannel, checkServerHealth]);
 
   const createRoom = useCallback(async (roomCode: string) => {
     setConnectionState('connecting');
     
     try {
-      const socket = connectToSignalingServer();
-      currentRoomRef.current = roomCode;
+      const socket = await connectToSignalingServer();
+      if (!socket) {
+        throw new Error('Failed to connect to signaling server');
+      }
       
+      currentRoomRef.current = roomCode;
       socket.emit('join-room', roomCode);
       console.log(`Room ${roomCode} created successfully`);
     } catch (error) {
+      console.error('Error creating room:', error);
       setConnectionState('failed');
       throw error;
     }
@@ -378,12 +385,16 @@ export const useWebRTC = () => {
     setConnectionState('connecting');
     
     try {
-      const socket = connectToSignalingServer();
-      currentRoomRef.current = roomCode;
+      const socket = await connectToSignalingServer();
+      if (!socket) {
+        throw new Error('Failed to connect to signaling server');
+      }
       
+      currentRoomRef.current = roomCode;
       socket.emit('join-room', roomCode);
       console.log(`Joined room ${roomCode} successfully`);
     } catch (error) {
+      console.error('Error joining room:', error);
       setConnectionState('failed');
       throw error;
     }
@@ -403,12 +414,10 @@ export const useWebRTC = () => {
 
     setOutgoingFiles(prev => [...prev, transfer]);
 
-    // Send to all connected peers
     peerConnectionsRef.current.forEach((peer, peerId) => {
       if (peer.dataChannel && peer.dataChannel.readyState === 'open') {
         console.log(`Sending file ${file.name} to peer ${peerId}`);
         
-        // Send file metadata first
         const metadata = {
           type: 'file-start',
           transferId,
@@ -418,8 +427,7 @@ export const useWebRTC = () => {
         };
         peer.dataChannel.send(JSON.stringify(metadata));
 
-        // Send file in chunks
-        const chunkSize = 16384; // 16KB chunks
+        const chunkSize = 16384;
         const reader = new FileReader();
         let offset = 0;
 
@@ -448,7 +456,7 @@ export const useWebRTC = () => {
               );
 
               if (offset < file.size) {
-                setTimeout(sendChunk, 10); // Small delay between chunks
+                setTimeout(sendChunk, 10);
               } else {
                 setOutgoingFiles(prev => 
                   prev.map(t => 
@@ -483,6 +491,9 @@ export const useWebRTC = () => {
 
   useEffect(() => {
     return () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
       socketRef.current?.disconnect();
       peerConnectionsRef.current.forEach(peer => {
         if (peer.connectionTimeout) {
@@ -499,6 +510,7 @@ export const useWebRTC = () => {
     connectedPeers,
     incomingFiles,
     outgoingFiles,
+    connectionError,
     createRoom,
     joinRoom,
     sendFile,
