@@ -48,10 +48,15 @@ export const useWebRTC = () => {
   // Check if signaling server is accessible
   const checkServerHealth = useCallback(async (): Promise<boolean> => {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
       const response = await fetch('http://localhost:3001/health', { 
         method: 'GET',
-        timeout: 5000 
+        signal: controller.signal
       });
+      
+      clearTimeout(timeoutId);
       return response.ok;
     } catch (error) {
       console.log('Signaling server health check failed:', error);

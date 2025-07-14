@@ -151,7 +151,7 @@ const FileShare = () => {
                 connectedPeers={connectedPeers} 
               />
 
-              {!isHost && connectionState === 'disconnected' && (
+              {connectionState === 'disconnected' && (
                 <>
                   <div className="space-y-2">
                     <Button 
@@ -193,7 +193,7 @@ const FileShare = () => {
                 </>
               )}
 
-              {isHost && roomCode && (
+              {isHost && roomCode && connectionState === 'connected' && (
                 <div className="space-y-3">
                   <div className="p-3 bg-primary/10 rounded-lg">
                     <p className="text-sm text-muted-foreground mb-2">
