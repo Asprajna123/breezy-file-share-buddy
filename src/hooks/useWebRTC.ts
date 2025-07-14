@@ -1,4 +1,3 @@
-
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { io, Socket } from 'socket.io-client';
 
@@ -19,6 +18,7 @@ interface PeerConnection {
   connection: RTCPeerConnection;
   dataChannel?: RTCDataChannel;
   socketId: string;
+  connectionTimeout?: NodeJS.Timeout;
 }
 
 export const useWebRTC = () => {
@@ -32,28 +32,78 @@ export const useWebRTC = () => {
   const currentRoomRef = useRef<string | null>(null);
   const pendingTransfersRef = useRef<Map<string, { chunks: ArrayBuffer[]; received: number; total: number }>>(new Map());
 
-  // ICE servers configuration
+  // Enhanced ICE servers configuration with multiple STUN servers
   const iceServers = [
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' }
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun.services.mozilla.com' }
   ];
 
-  // Create peer connection for a specific peer
-  const createPeerConnection = useCallback((socketId: string): RTCPeerConnection => {
-    const peerConnection = new RTCPeerConnection({ iceServers });
+  // Connection timeout duration
+  const CONNECTION_TIMEOUT = 15000; // 15 seconds
 
-    // Handle ICE candidates
+  // Create peer connection with enhanced error handling
+  const createPeerConnection = useCallback((socketId: string): RTCPeerConnection => {
+    console.log(`Creating peer connection with ${socketId}`);
+    
+    const peerConnection = new RTCPeerConnection({ 
+      iceServers,
+      iceCandidatePoolSize: 10
+    });
+
+    // Enhanced connection state monitoring
+    peerConnection.onconnectionstatechange = () => {
+      console.log(`Peer connection state with ${socketId}:`, peerConnection.connectionState);
+      
+      if (peerConnection.connectionState === 'connected') {
+        console.log(`Successfully connected to peer ${socketId}`);
+        setConnectedPeers(prev => {
+          if (!prev.includes(socketId)) {
+            return [...prev, socketId];
+          }
+          return prev;
+        });
+        
+        // Clear timeout if connection succeeds
+        const peer = peerConnectionsRef.current.get(socketId);
+        if (peer?.connectionTimeout) {
+          clearTimeout(peer.connectionTimeout);
+        }
+      } else if (peerConnection.connectionState === 'failed' || peerConnection.connectionState === 'disconnected') {
+        console.log(`Connection failed/disconnected with peer ${socketId}`);
+        setConnectedPeers(prev => prev.filter(id => id !== socketId));
+        
+        // Clean up failed connection
+        const peer = peerConnectionsRef.current.get(socketId);
+        if (peer?.connectionTimeout) {
+          clearTimeout(peer.connectionTimeout);
+        }
+        peerConnectionsRef.current.delete(socketId);
+      }
+    };
+
+    // Handle ICE candidates with enhanced logging
     peerConnection.onicecandidate = (event) => {
       if (event.candidate && socketRef.current) {
+        console.log(`Sending ICE candidate to ${socketId}`);
         socketRef.current.emit('ice-candidate', {
           candidate: event.candidate,
           targetSocketId: socketId
         });
+      } else if (!event.candidate) {
+        console.log(`ICE gathering complete for ${socketId}`);
       }
+    };
+
+    // Handle ICE connection state changes
+    peerConnection.oniceconnectionstatechange = () => {
+      console.log(`ICE connection state with ${socketId}:`, peerConnection.iceConnectionState);
     };
 
     // Handle incoming data channel
     peerConnection.ondatachannel = (event) => {
+      console.log(`Received data channel from ${socketId}`);
       const channel = event.channel;
       setupDataChannel(channel, socketId);
     };
@@ -61,12 +111,20 @@ export const useWebRTC = () => {
     return peerConnection;
   }, []);
 
-  // Setup data channel for file transfer
+  // Enhanced data channel setup
   const setupDataChannel = useCallback((channel: RTCDataChannel, peerId: string) => {
     channel.binaryType = 'arraybuffer';
 
     channel.onopen = () => {
       console.log(`Data channel opened with peer ${peerId}`);
+    };
+
+    channel.onclose = () => {
+      console.log(`Data channel closed with peer ${peerId}`);
+    };
+
+    channel.onerror = (error) => {
+      console.error(`Data channel error with peer ${peerId}:`, error);
     };
 
     channel.onmessage = (event) => {
@@ -75,6 +133,7 @@ export const useWebRTC = () => {
           // Handle metadata
           const metadata = JSON.parse(event.data);
           if (metadata.type === 'file-start') {
+            console.log(`Starting file transfer: ${metadata.name} from ${peerId}`);
             pendingTransfersRef.current.set(metadata.transferId, {
               chunks: [],
               received: 0,
@@ -114,7 +173,7 @@ export const useWebRTC = () => {
             );
 
             if (pending.received >= pending.total) {
-              // File transfer complete
+              console.log(`File transfer complete: ${transferId}`);
               const completeFile = new Blob(pending.chunks);
               
               setIncomingFiles(prev => 
@@ -133,18 +192,16 @@ export const useWebRTC = () => {
         console.error('Error handling data channel message:', error);
       }
     };
-
-    channel.onerror = (error) => {
-      console.error('Data channel error:', error);
-    };
   }, []);
 
-  // Connect to signaling server
+  // Enhanced signaling server connection
   const connectToSignalingServer = useCallback(() => {
-    // For demo purposes, we'll use a public signaling server or localhost
-    // In production, you'd use your own signaling server
+    console.log('Connecting to signaling server...');
+    
     const socket = io('ws://localhost:3001', {
-      transports: ['websocket']
+      transports: ['websocket'],
+      timeout: 10000,
+      forceNew: true
     });
 
     socket.on('connect', () => {
@@ -152,61 +209,107 @@ export const useWebRTC = () => {
       socketRef.current = socket;
     });
 
+    socket.on('connect_error', (error) => {
+      console.error('Signaling server connection error:', error);
+      setConnectionState('failed');
+    });
+
     socket.on('disconnect', () => {
       console.log('Disconnected from signaling server');
       setConnectionState('disconnected');
       setConnectedPeers([]);
+      
+      // Clean up all peer connections
+      peerConnectionsRef.current.forEach(peer => {
+        if (peer.connectionTimeout) {
+          clearTimeout(peer.connectionTimeout);
+        }
+        peer.connection.close();
+      });
+      peerConnectionsRef.current.clear();
     });
 
     // Handle all users in room
-    socket.on('all-users', (users: string[]) => {
+    socket.on('all-users', async (users: string[]) => {
       console.log('All users in room:', users);
-      setConnectedPeers(users);
       setConnectionState('connected');
       
       // Create peer connections for existing users
-      users.forEach(userId => {
+      for (const userId of users) {
         if (!peerConnectionsRef.current.has(userId)) {
+          console.log(`Creating connection to existing user: ${userId}`);
+          
           const peerConnection = createPeerConnection(userId);
-          const dataChannel = peerConnection.createDataChannel('fileTransfer');
+          const dataChannel = peerConnection.createDataChannel('fileTransfer', {
+            ordered: true
+          });
           setupDataChannel(dataChannel, userId);
+          
+          // Set up connection timeout
+          const connectionTimeout = setTimeout(() => {
+            console.log(`Connection timeout with ${userId}`);
+            peerConnection.close();
+            peerConnectionsRef.current.delete(userId);
+          }, CONNECTION_TIMEOUT);
           
           peerConnectionsRef.current.set(userId, {
             connection: peerConnection,
             dataChannel,
-            socketId: userId
+            socketId: userId,
+            connectionTimeout
           });
 
-          // Create offer
-          peerConnection.createOffer().then(offer => {
-            peerConnection.setLocalDescription(offer);
+          try {
+            // Create offer with enhanced SDP
+            const offer = await peerConnection.createOffer({
+              offerToReceiveAudio: false,
+              offerToReceiveVideo: false
+            });
+            await peerConnection.setLocalDescription(offer);
+            
+            console.log(`Sending offer to ${userId}`);
             socket.emit('offer', { offer, targetSocketId: userId });
-          });
+          } catch (error) {
+            console.error(`Error creating offer for ${userId}:`, error);
+          }
         }
-      });
+      }
     });
 
     // Handle new user joined
     socket.on('user-joined', (socketId: string) => {
       console.log('User joined:', socketId);
-      setConnectedPeers(prev => [...prev, socketId]);
     });
 
     // Handle offer
     socket.on('offer', async ({ offer, senderSocketId }: { offer: RTCSessionDescriptionInit; senderSocketId: string }) => {
       console.log('Received offer from:', senderSocketId);
       
-      const peerConnection = createPeerConnection(senderSocketId);
-      peerConnectionsRef.current.set(senderSocketId, {
-        connection: peerConnection,
-        socketId: senderSocketId
-      });
+      try {
+        const peerConnection = createPeerConnection(senderSocketId);
+        
+        // Set up connection timeout
+        const connectionTimeout = setTimeout(() => {
+          console.log(`Connection timeout with ${senderSocketId}`);
+          peerConnection.close();
+          peerConnectionsRef.current.delete(senderSocketId);
+        }, CONNECTION_TIMEOUT);
+        
+        peerConnectionsRef.current.set(senderSocketId, {
+          connection: peerConnection,
+          socketId: senderSocketId,
+          connectionTimeout
+        });
 
-      await peerConnection.setRemoteDescription(offer);
-      const answer = await peerConnection.createAnswer();
-      await peerConnection.setLocalDescription(answer);
-      
-      socket.emit('answer', { answer, targetSocketId: senderSocketId });
+        await peerConnection.setRemoteDescription(offer);
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+        
+        console.log(`Sending answer to ${senderSocketId}`);
+        socket.emit('answer', { answer, targetSocketId: senderSocketId });
+      } catch (error) {
+        console.error(`Error handling offer from ${senderSocketId}:`, error);
+      }
     });
 
     // Handle answer
@@ -215,15 +318,27 @@ export const useWebRTC = () => {
       
       const peer = peerConnectionsRef.current.get(senderSocketId);
       if (peer) {
-        await peer.connection.setRemoteDescription(answer);
+        try {
+          await peer.connection.setRemoteDescription(answer);
+          console.log(`Successfully set remote description for ${senderSocketId}`);
+        } catch (error) {
+          console.error(`Error setting remote description for ${senderSocketId}:`, error);
+        }
       }
     });
 
     // Handle ICE candidate
     socket.on('ice-candidate', async ({ candidate, senderSocketId }: { candidate: RTCIceCandidateInit; senderSocketId: string }) => {
+      console.log(`Received ICE candidate from ${senderSocketId}`);
+      
       const peer = peerConnectionsRef.current.get(senderSocketId);
       if (peer) {
-        await peer.connection.addIceCandidate(new RTCIceCandidate(candidate));
+        try {
+          await peer.connection.addIceCandidate(new RTCIceCandidate(candidate));
+          console.log(`Successfully added ICE candidate for ${senderSocketId}`);
+        } catch (error) {
+          console.error(`Error adding ICE candidate for ${senderSocketId}:`, error);
+        }
       }
     });
 
@@ -232,6 +347,9 @@ export const useWebRTC = () => {
       console.log('User disconnected:', socketId);
       const peer = peerConnectionsRef.current.get(socketId);
       if (peer) {
+        if (peer.connectionTimeout) {
+          clearTimeout(peer.connectionTimeout);
+        }
         peer.connection.close();
         peerConnectionsRef.current.delete(socketId);
       }
@@ -241,7 +359,6 @@ export const useWebRTC = () => {
     return socket;
   }, [createPeerConnection, setupDataChannel]);
 
-  // Create room
   const createRoom = useCallback(async (roomCode: string) => {
     setConnectionState('connecting');
     
@@ -257,7 +374,6 @@ export const useWebRTC = () => {
     }
   }, [connectToSignalingServer]);
 
-  // Join room
   const joinRoom = useCallback(async (roomCode: string) => {
     setConnectionState('connecting');
     
@@ -273,7 +389,6 @@ export const useWebRTC = () => {
     }
   }, [connectToSignalingServer]);
 
-  // Send file to all connected peers
   const sendFile = useCallback((file: File) => {
     const transferId = `${Date.now()}-${Math.random()}`;
     
@@ -291,6 +406,8 @@ export const useWebRTC = () => {
     // Send to all connected peers
     peerConnectionsRef.current.forEach((peer, peerId) => {
       if (peer.dataChannel && peer.dataChannel.readyState === 'open') {
+        console.log(`Sending file ${file.name} to peer ${peerId}`);
+        
         // Send file metadata first
         const metadata = {
           type: 'file-start',
@@ -351,7 +468,6 @@ export const useWebRTC = () => {
     });
   }, []);
 
-  // Download file
   const downloadFile = useCallback((transfer: FileTransfer) => {
     if (!transfer.blob) return;
 
@@ -365,11 +481,15 @@ export const useWebRTC = () => {
     URL.revokeObjectURL(url);
   }, []);
 
-  // Cleanup
   useEffect(() => {
     return () => {
       socketRef.current?.disconnect();
-      peerConnectionsRef.current.forEach(peer => peer.connection.close());
+      peerConnectionsRef.current.forEach(peer => {
+        if (peer.connectionTimeout) {
+          clearTimeout(peer.connectionTimeout);
+        }
+        peer.connection.close();
+      });
       peerConnectionsRef.current.clear();
     };
   }, []);
