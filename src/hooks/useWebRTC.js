@@ -1,38 +1,19 @@
+
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { io, Socket } from 'socket.io-client';
-
-interface FileTransfer {
-  id: string;
-  name: string;
-  size: number;
-  type: string;
-  progress: number;
-  status: 'pending' | 'transferring' | 'completed' | 'failed';
-  peer?: string;
-  blob?: Blob;
-}
-
-type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'failed';
-
-interface PeerConnection {
-  connection: RTCPeerConnection;
-  dataChannel?: RTCDataChannel;
-  socketId: string;
-  connectionTimeout?: NodeJS.Timeout;
-}
+import { io } from 'socket.io-client';
 
 export const useWebRTC = () => {
-  const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
-  const [connectedPeers, setConnectedPeers] = useState<string[]>([]);
-  const [incomingFiles, setIncomingFiles] = useState<FileTransfer[]>([]);
-  const [outgoingFiles, setOutgoingFiles] = useState<FileTransfer[]>([]);
-  const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [connectionState, setConnectionState] = useState('disconnected');
+  const [connectedPeers, setConnectedPeers] = useState([]);
+  const [incomingFiles, setIncomingFiles] = useState([]);
+  const [outgoingFiles, setOutgoingFiles] = useState([]);
+  const [connectionError, setConnectionError] = useState(null);
 
-  const socketRef = useRef<Socket | null>(null);
-  const peerConnectionsRef = useRef<Map<string, PeerConnection>>(new Map());
-  const currentRoomRef = useRef<string | null>(null);
-  const pendingTransfersRef = useRef<Map<string, { chunks: ArrayBuffer[]; received: number; total: number }>>(new Map());
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const socketRef = useRef(null);
+  const peerConnectionsRef = useRef(new Map());
+  const currentRoomRef = useRef(null);
+  const pendingTransfersRef = useRef(new Map());
+  const reconnectTimeoutRef = useRef(null);
 
   // Enhanced ICE servers configuration
   const iceServers = [
@@ -46,7 +27,7 @@ export const useWebRTC = () => {
   const RECONNECT_DELAY = 3000; // 3 seconds
 
   // Check if signaling server is accessible
-  const checkServerHealth = useCallback(async (): Promise<boolean> => {
+  const checkServerHealth = useCallback(async () => {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
@@ -64,7 +45,7 @@ export const useWebRTC = () => {
     }
   }, []);
 
-  const createPeerConnection = useCallback((socketId: string): RTCPeerConnection => {
+  const createPeerConnection = useCallback((socketId) => {
     console.log(`Creating peer connection with ${socketId}`);
     
     const peerConnection = new RTCPeerConnection({ 
@@ -119,7 +100,7 @@ export const useWebRTC = () => {
     return peerConnection;
   }, []);
 
-  const setupDataChannel = useCallback((channel: RTCDataChannel, peerId: string) => {
+  const setupDataChannel = useCallback((channel, peerId) => {
     channel.binaryType = 'arraybuffer';
 
     channel.onopen = () => {
@@ -138,7 +119,7 @@ export const useWebRTC = () => {
               total: metadata.size
             });
 
-            const transfer: FileTransfer = {
+            const transfer = {
               id: metadata.transferId,
               name: metadata.name,
               size: metadata.size,
@@ -247,7 +228,7 @@ export const useWebRTC = () => {
       peerConnectionsRef.current.clear();
     });
 
-    socket.on('all-users', async (users: string[]) => {
+    socket.on('all-users', async (users) => {
       console.log('All users in room:', users);
       setConnectionState('connected');
       
@@ -290,11 +271,11 @@ export const useWebRTC = () => {
       }
     });
 
-    socket.on('user-joined', (socketId: string) => {
+    socket.on('user-joined', (socketId) => {
       console.log('User joined:', socketId);
     });
 
-    socket.on('offer', async ({ offer, senderSocketId }: { offer: RTCSessionDescriptionInit; senderSocketId: string }) => {
+    socket.on('offer', async ({ offer, senderSocketId }) => {
       console.log('Received offer from:', senderSocketId);
       
       try {
@@ -323,7 +304,7 @@ export const useWebRTC = () => {
       }
     });
 
-    socket.on('answer', async ({ answer, senderSocketId }: { answer: RTCSessionDescriptionInit; senderSocketId: string }) => {
+    socket.on('answer', async ({ answer, senderSocketId }) => {
       console.log('Received answer from:', senderSocketId);
       
       const peer = peerConnectionsRef.current.get(senderSocketId);
@@ -337,7 +318,7 @@ export const useWebRTC = () => {
       }
     });
 
-    socket.on('ice-candidate', async ({ candidate, senderSocketId }: { candidate: RTCIceCandidateInit; senderSocketId: string }) => {
+    socket.on('ice-candidate', async ({ candidate, senderSocketId }) => {
       console.log(`Received ICE candidate from ${senderSocketId}`);
       
       const peer = peerConnectionsRef.current.get(senderSocketId);
@@ -351,7 +332,7 @@ export const useWebRTC = () => {
       }
     });
 
-    socket.on('user-disconnected', (socketId: string) => {
+    socket.on('user-disconnected', (socketId) => {
       console.log('User disconnected:', socketId);
       const peer = peerConnectionsRef.current.get(socketId);
       if (peer) {
@@ -367,7 +348,7 @@ export const useWebRTC = () => {
     return socket;
   }, [createPeerConnection, setupDataChannel, checkServerHealth]);
 
-  const createRoom = useCallback(async (roomCode: string) => {
+  const createRoom = useCallback(async (roomCode) => {
     setConnectionState('connecting');
     
     try {
@@ -386,7 +367,7 @@ export const useWebRTC = () => {
     }
   }, [connectToSignalingServer]);
 
-  const joinRoom = useCallback(async (roomCode: string) => {
+  const joinRoom = useCallback(async (roomCode) => {
     setConnectionState('connecting');
     
     try {
@@ -405,10 +386,10 @@ export const useWebRTC = () => {
     }
   }, [connectToSignalingServer]);
 
-  const sendFile = useCallback((file: File) => {
+  const sendFile = useCallback((file) => {
     const transferId = `${Date.now()}-${Math.random()}`;
     
-    const transfer: FileTransfer = {
+    const transfer = {
       id: transferId,
       name: file.name,
       size: file.size,
@@ -440,7 +421,7 @@ export const useWebRTC = () => {
           const chunk = file.slice(offset, offset + chunkSize);
           reader.onload = (e) => {
             if (e.target?.result && peer.dataChannel?.readyState === 'open') {
-              const arrayBuffer = e.target.result as ArrayBuffer;
+              const arrayBuffer = e.target.result;
               const transferIdBuffer = new TextEncoder().encode(transferId.padEnd(36));
               const combinedBuffer = new ArrayBuffer(transferIdBuffer.byteLength + arrayBuffer.byteLength);
               const combinedView = new Uint8Array(combinedBuffer);
@@ -481,7 +462,7 @@ export const useWebRTC = () => {
     });
   }, []);
 
-  const downloadFile = useCallback((transfer: FileTransfer) => {
+  const downloadFile = useCallback((transfer) => {
     if (!transfer.blob) return;
 
     const url = URL.createObjectURL(transfer.blob);

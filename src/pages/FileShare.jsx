@@ -1,3 +1,4 @@
+
 import { useState, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -76,7 +77,7 @@ const FileShare = () => {
     }
   };
 
-  const handleFileDrop = useCallback((files: File[]) => {
+  const handleFileDrop = useCallback((files) => {
     if (connectedPeers.length === 0) {
       toast({
         title: "No Connection",
