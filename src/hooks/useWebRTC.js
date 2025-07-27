@@ -34,7 +34,7 @@ export const useWebRTC = () => {
     }
     // For mobile devices, you'll need to replace this with your laptop's actual IP
     // Find your laptop's IP with: ipconfig (Windows) or ifconfig (Mac/Linux)
-    return 'http://192.168.1.100:3001'; // Replace with your laptop's IP address
+    return 'http://YOUR_LAPTOP_IP:3001'; // Replace YOUR_LAPTOP_IP with the actual IP from Step 1
   }, []);
 
   // Check if signaling server is accessible
