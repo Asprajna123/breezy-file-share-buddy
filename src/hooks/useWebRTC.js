@@ -26,13 +26,25 @@ export const useWebRTC = () => {
   const CONNECTION_TIMEOUT = 10000; // 10 seconds
   const RECONNECT_DELAY = 3000; // 3 seconds
 
+  // Get the signaling server URL based on environment
+  const getSignalingServerUrl = useCallback(() => {
+    // Try to detect if we're in development (localhost) or need to use IP
+    if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+      return 'http://localhost:3001';
+    }
+    // For mobile devices, you'll need to replace this with your laptop's actual IP
+    // Find your laptop's IP with: ipconfig (Windows) or ifconfig (Mac/Linux)
+    return 'http://192.168.1.100:3001'; // Replace with your laptop's IP address
+  }, []);
+
   // Check if signaling server is accessible
   const checkServerHealth = useCallback(async () => {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 5000);
       
-      const response = await fetch('http://localhost:3001/health', { 
+      const serverUrl = getSignalingServerUrl();
+      const response = await fetch(`${serverUrl}/health`, { 
         method: 'GET',
         signal: controller.signal
       });
@@ -43,7 +55,7 @@ export const useWebRTC = () => {
       console.log('Signaling server health check failed:', error);
       return false;
     }
-  }, []);
+  }, [getSignalingServerUrl]);
 
   const createPeerConnection = useCallback((socketId) => {
     console.log(`Creating peer connection with ${socketId}`);
@@ -179,7 +191,8 @@ export const useWebRTC = () => {
     const isServerHealthy = await checkServerHealth();
     if (!isServerHealthy) {
       console.error('Signaling server is not accessible at localhost:3001');
-      setConnectionError('Signaling server not accessible. Please ensure the server is running on localhost:3001');
+      const serverUrl = getSignalingServerUrl();
+      setConnectionError(`Signaling server not accessible. Please ensure the server is running on ${serverUrl.replace('http://', '')}`);
       setConnectionState('failed');
       return null;
     }
@@ -187,7 +200,9 @@ export const useWebRTC = () => {
     console.log('Connecting to signaling server...');
     setConnectionError(null);
     
-    const socket = io('http://localhost:3001', {
+    const serverUrl = getSignalingServerUrl();
+    console.log('Using signaling server URL:', serverUrl);
+    const socket = io(serverUrl, {
       transports: ['websocket', 'polling'],
       timeout: 10000,
       reconnection: true,
